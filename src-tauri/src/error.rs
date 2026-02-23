@@ -8,6 +8,9 @@ pub enum AppError {
     #[error("Audio error: {0}")]
     Audio(String),
 
+    #[error("VAD error: {0}")]
+    Vad(#[from] crate::vad::VadError),
+
     #[error("STT error: {0}")]
     Stt(String),
 

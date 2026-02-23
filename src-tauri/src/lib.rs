@@ -6,6 +6,7 @@ mod logging;
 mod paste;
 mod state;
 mod stt;
+#[allow(dead_code, unused_imports)]
 mod vad;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
