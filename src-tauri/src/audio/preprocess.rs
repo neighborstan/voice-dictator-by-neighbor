@@ -133,11 +133,10 @@ pub fn trim_trailing_silence(samples: &[f32], sample_rate: u32, min_silence_ms: 
         return samples;
     }
 
-    let chunks: Vec<&[f32]> = samples.chunks(frame_size).collect();
     let mut trailing_silence = 0;
     let mut last_voice_end = samples.len();
 
-    for (i, frame) in chunks.iter().enumerate().rev() {
+    for (i, frame) in samples.chunks(frame_size).enumerate().rev() {
         let energy = calculate_energy(frame);
         if energy > SILENCE_RMS_THRESHOLD {
             last_voice_end = (i + 1) * frame_size;

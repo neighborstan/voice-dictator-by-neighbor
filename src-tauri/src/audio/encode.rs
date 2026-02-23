@@ -96,7 +96,10 @@ pub fn encode_ogg_opus(samples: &[f32], sample_rate: u32) -> Result<Vec<u8>> {
     tracing::debug!(
         input_samples = samples.len(),
         output_bytes = out.len(),
-        compression_ratio = format_args!("{:.1}x", (samples.len() * 4) as f64 / out.len() as f64),
+        compression_ratio = format_args!(
+            "{:.1}x",
+            std::mem::size_of_val(samples) as f64 / out.len() as f64
+        ),
         "OGG/Opus encoding complete"
     );
 
