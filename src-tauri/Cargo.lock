@@ -5509,6 +5509,7 @@ dependencies = [
  "tauri-plugin-global-shortcut",
  "tauri-plugin-notification",
  "tauri-plugin-opener",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
