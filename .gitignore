@@ -61,3 +61,15 @@ INFO/
 
 ### Generated static content (built from ui/web) ###
 src/main/resources/static/
+
+### Node.js ###
+node_modules/
+dist/
+build/
+
+### Svelte / SvelteKit ###
+.svelte-kit/
+
+### Local dev scripts (not for repo) ###
+*.bat
+nul

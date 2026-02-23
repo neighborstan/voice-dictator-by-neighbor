@@ -1,0 +1,21 @@
+mod audio;
+mod config;
+mod enhance;
+mod error;
+mod logging;
+mod paste;
+mod state;
+mod stt;
+mod vad;
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    logging::init_logging();
+
+    tracing::info!("VoiceDictator starting");
+
+    tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
+}
