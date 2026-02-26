@@ -88,7 +88,7 @@ impl Default for AppConfig {
             enhance_model: "gpt-5-mini".to_string(),
             enhance_enabled: true,
             vad_auto_stop: true,
-            vad_silence_threshold_sec: 5.0,
+            vad_silence_threshold_sec: 10.0,
             vad_trim_silence: true,
             max_recording_duration_sec: 60,
             min_recording_duration_ms: 300,
@@ -122,7 +122,7 @@ mod tests {
         assert_eq!(config.enhance_model, "gpt-5-mini");
         assert!(config.enhance_enabled);
         assert!(config.vad_auto_stop);
-        assert!((config.vad_silence_threshold_sec - 5.0).abs() < f32::EPSILON);
+        assert!((config.vad_silence_threshold_sec - 10.0).abs() < f32::EPSILON);
         assert!(config.vad_trim_silence);
         assert_eq!(config.max_recording_duration_sec, 60);
         assert_eq!(config.min_recording_duration_ms, 300);
