@@ -117,8 +117,7 @@ impl OpenAiEnhancer {
             match self.send_request(&url, &instructions, raw_text).await {
                 Ok(enhanced) => {
                     return match validate_enhancement(raw_text, &enhanced) {
-                        ValidationResult::Ok(text) => Ok(text),
-                        ValidationResult::Fallback(text) => Ok(text),
+                        ValidationResult::Ok(text) | ValidationResult::Fallback(text) => Ok(text),
                     };
                 }
                 Err(EnhanceError::RateLimited { retry_after_sec }) => {
@@ -253,8 +252,7 @@ fn extract_output_text(resp: &ResponsesResponse) -> Result<String> {
         .iter()
         .flat_map(|item| item.content.iter())
         .map(|block| block.text.as_str())
-        .collect::<Vec<_>>()
-        .join("");
+        .collect();
 
     if text.trim().is_empty() {
         return Err(EnhanceError::InvalidResponse(
