@@ -92,18 +92,18 @@
       const current = await invoke<AppConfig>("get_config");
       const hotkeyChanged = current.hotkey !== config.hotkey;
 
-      await invoke("save_config", { updatedConfig: config });
-
+      // Validate hotkey before saving config to avoid persisting invalid hotkey
       if (hotkeyChanged) {
         try {
           await invoke("update_hotkey", { hotkeyStr: config.hotkey });
         } catch (e) {
-          statusMessage = `Settings saved, but hotkey update failed: ${e}`;
-          saveStatus = "error";
+          showStatus(`Invalid hotkey: ${e}. Settings not saved.`, "error");
+          config.hotkey = current.hotkey;
           return;
         }
       }
 
+      await invoke("save_config", { updatedConfig: config });
       showStatus("Settings saved", "saved");
     } catch (e) {
       saveStatus = "error";

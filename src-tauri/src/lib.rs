@@ -86,7 +86,19 @@ async fn validate_api_key(
         .api_base_url
         .clone();
 
-    let url = format!("{}/v1/models", base_url.trim_end_matches('/'));
+    let base_url = base_url.trim_end_matches('/');
+    // SSRF protection: only allow https:// and http://localhost / http://127.0.0.1
+    if !base_url.starts_with("https://")
+        && !base_url.starts_with("http://localhost")
+        && !base_url.starts_with("http://127.0.0.1")
+    {
+        return Err(
+            "Invalid API base URL: only https:// is allowed (http://localhost for development)"
+                .to_string(),
+        );
+    }
+
+    let url = format!("{}/v1/models", base_url);
     let client = reqwest::Client::new();
     let response = client
         .get(&url)
