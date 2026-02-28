@@ -96,10 +96,15 @@ impl ClipboardManager {
     }
 
     /// Читает текущее текстовое содержимое clipboard.
+    ///
+    /// - Текст доступен -> `Ok(Some(text))`
+    /// - Нет текста / non-text содержимое -> `Ok(None)`
+    /// - Прочие ошибки (occupied, system) -> `Err`
     pub fn read(&mut self) -> super::Result<Option<String>> {
         match self.clipboard.get_text() {
             Ok(text) => Ok(Some(text)),
-            Err(_) => Ok(None),
+            Err(arboard::Error::ContentNotAvailable) => Ok(None),
+            Err(e) => Err(super::PasteError::ClipboardUnavailable(e.to_string())),
         }
     }
 
