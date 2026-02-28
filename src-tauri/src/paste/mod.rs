@@ -51,30 +51,29 @@ pub enum PasteStatus {
 /// текст остается в clipboard, возвращается `ClipboardOnly`.
 ///
 /// При ошибке clipboard: возвращается `ResultWindow`.
-pub fn paste_text(text: &str) -> std::result::Result<PasteStatus, PasteError> {
+pub fn paste_text(text: &str) -> PasteStatus {
     tracing::info!("Starting paste pipeline ({} chars)", text.len());
 
     let mut manager = match ClipboardManager::new() {
         Ok(m) => m,
         Err(e) => {
             tracing::warn!("Clipboard unavailable: {e}, falling back to ResultWindow");
-            return Ok(PasteStatus::ResultWindow);
+            return PasteStatus::ResultWindow;
         }
     };
 
     if let Err(e) = manager.save() {
-        tracing::warn!("Failed to save clipboard: {e}, falling back to ResultWindow");
-        return Ok(PasteStatus::ResultWindow);
+        tracing::warn!("Failed to save clipboard: {e}, continuing without restore");
     }
 
     if let Err(e) = manager.write(text) {
         tracing::warn!("Failed to write to clipboard: {e}, falling back to ResultWindow");
-        return Ok(PasteStatus::ResultWindow);
+        return PasteStatus::ResultWindow;
     }
 
     if let Err(e) = input::simulate_paste() {
         tracing::warn!("Key simulation failed: {e}, text is in clipboard (ClipboardOnly mode)");
-        return Ok(PasteStatus::ClipboardOnly);
+        return PasteStatus::ClipboardOnly;
     }
 
     thread::sleep(Duration::from_millis(RESTORE_DELAY_MS));
@@ -84,7 +83,7 @@ pub fn paste_text(text: &str) -> std::result::Result<PasteStatus, PasteError> {
     }
 
     tracing::info!("Paste completed successfully");
-    Ok(PasteStatus::Pasted)
+    PasteStatus::Pasted
 }
 
 #[cfg(test)]
