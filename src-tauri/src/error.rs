@@ -15,7 +15,7 @@ pub enum AppError {
     Stt(#[from] crate::stt::SttError),
 
     #[error("Enhance error: {0}")]
-    Enhance(String),
+    Enhance(#[from] crate::enhance::EnhanceError),
 
     #[error("Paste error: {0}")]
     Paste(String),

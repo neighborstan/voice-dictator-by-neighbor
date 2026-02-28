@@ -171,10 +171,12 @@ mod tests {
         // Given
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().join("voicedictator");
-        let mut config = AppConfig::default();
-        config.hotkey = "Alt+R".to_string();
-        config.language = "ru".to_string();
-        config.max_recording_duration_sec = 120;
+        let config = AppConfig {
+            hotkey: "Alt+R".to_string(),
+            language: "ru".to_string(),
+            max_recording_duration_sec: 120,
+            ..Default::default()
+        };
 
         // When
         save_config_to(&dir, &config).unwrap();
