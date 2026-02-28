@@ -29,6 +29,7 @@ opus = "0.3"
 
 # HTTP client
 reqwest = { version = "0.13", default-features = false, features = ["json", "multipart", "rustls", "charset", "http2"] }
+bytes = "1"
 
 # Serialization
 serde = { version = "1", features = ["derive"] }

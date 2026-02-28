@@ -56,6 +56,13 @@ const MIN_CHUNK_SEC: f32 = 5.0;
 /// Максимальная длительность одного чанка по умолчанию (секунды).
 const DEFAULT_MAX_CHUNK_SEC: u32 = 30;
 
+/// Начало зоны поиска тихого места для разреза (проценты от длины чанка).
+/// Ищем тишину в последних (100 - QUIET_SEARCH_START_PERCENT)% чанка.
+const QUIET_SEARCH_START_PERCENT: usize = 70;
+
+/// Размер окна RMS-анализа энергии (миллисекунды).
+const RMS_WINDOW_MS: u32 = 20;
+
 /// Высокоуровневая функция: кодирует PCM в OGG/Opus и транскрибирует.
 ///
 /// Если аудио укладывается в один чанк, кодирует и отправляет как есть.
@@ -155,7 +162,7 @@ pub fn chunk_audio(samples: &[f32], sample_rate: u32, max_chunk_sec: u32) -> Vec
         }
 
         // Ищем тихое место в последних 30% окна чанка
-        let search_start = offset + max_chunk_samples * 7 / 10;
+        let search_start = offset + max_chunk_samples * QUIET_SEARCH_START_PERCENT / 100;
         let search_end = offset + max_chunk_samples;
 
         let split_point = find_quiet_split_point(&samples[search_start..search_end], sample_rate)
@@ -187,7 +194,7 @@ pub fn chunk_audio(samples: &[f32], sample_rate: u32, max_chunk_sec: u32) -> Vec
 ///
 /// Анализирует окна по 20ms с шагом 10ms. Возвращает смещение внутри `segment`.
 fn find_quiet_split_point(segment: &[f32], sample_rate: u32) -> Option<usize> {
-    let window_size = sample_rate as usize / 50; // 20ms
+    let window_size = (sample_rate * RMS_WINDOW_MS / 1000) as usize;
     if segment.len() < window_size * 2 {
         return None;
     }

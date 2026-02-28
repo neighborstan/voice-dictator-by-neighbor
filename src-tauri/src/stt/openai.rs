@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use bytes::Bytes;
 use reqwest::header;
 use reqwest::StatusCode;
 use serde::Deserialize;
@@ -80,11 +81,12 @@ impl OpenAiSttClient {
     /// Транскрипция с retry и rate limiting.
     async fn do_transcribe(&self, audio: &[u8], language: Option<&str>) -> Result<String> {
         let url = format!("{}/v1/audio/transcriptions", self.base_url);
+        let audio_bytes = Bytes::copy_from_slice(audio);
         let mut retries_left = self.retry_count;
         let mut rate_limit_retries: u32 = 0;
 
         loop {
-            match self.send_request(&url, audio, language).await {
+            match self.send_request(&url, audio_bytes.clone(), language).await {
                 Ok(text) => return Ok(text),
                 Err(SttError::RateLimited { retry_after_sec }) => {
                     rate_limit_retries += 1;
@@ -130,10 +132,10 @@ impl OpenAiSttClient {
     async fn send_request(
         &self,
         url: &str,
-        audio: &[u8],
+        audio: Bytes,
         language: Option<&str>,
     ) -> Result<String> {
-        let file_part = reqwest::multipart::Part::bytes(audio.to_vec())
+        let file_part = reqwest::multipart::Part::stream(audio)
             .file_name("audio.ogg")
             .mime_str("audio/ogg")
             .map_err(|e| SttError::Network(e.to_string()))?;
