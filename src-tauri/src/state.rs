@@ -101,11 +101,11 @@ pub fn transition(state: AppState, event: &AppEvent, mode: &RecordingMode) -> Ap
 
         // Невалидный переход - остаемся в текущем состоянии
         _ => {
-            tracing::warn!(
+            tracing::debug!(
                 state = ?state,
                 event = ?event,
                 mode = ?mode,
-                "invalid state transition, staying in current state"
+                "ignored state transition, staying in current state"
             );
             return state;
         }
@@ -153,6 +153,30 @@ impl SharedAppState {
         }
         *state = new;
         new
+    }
+
+    /// Применяет событие и возвращает (old, new) атомарно.
+    ///
+    /// В отличие от `dispatch`, гарантирует что `old` прочитано
+    /// в том же lock-е, что и запись `new` - без гонки.
+    pub fn dispatch_with_old(&self, event: &AppEvent) -> (AppState, AppState) {
+        let mut state = self.state.lock().expect("state mutex poisoned");
+        let mode = self.recording_mode.lock().expect("mode mutex poisoned");
+        let old = *state;
+        let new = transition(old, event, &mode);
+        if old != new {
+            tracing::info!(from = ?old, to = ?new, event = ?event, "state transition");
+        }
+        *state = new;
+        (old, new)
+    }
+
+    /// Возвращает текущий режим записи.
+    pub fn recording_mode(&self) -> RecordingMode {
+        self.recording_mode
+            .lock()
+            .expect("mode mutex poisoned")
+            .clone()
     }
 
     /// Устанавливает режим записи.
