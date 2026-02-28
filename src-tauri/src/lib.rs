@@ -64,9 +64,16 @@ pub fn run() {
 
             if let Err(e) = hotkey::register_hotkey(app.handle(), &hotkey_str) {
                 tracing::error!(error = %e, "failed to register hotkey, tray menu is available as fallback");
+                let config_path = crate::config::storage::config_dir()
+                    .map(|d| d.join("config.json").display().to_string())
+                    .unwrap_or_else(|_| "<config dir unknown>".to_string());
                 notifications::notify_error(
                     app.handle(),
-                    &format!("Failed to register hotkey: {}. Use tray menu instead.", e),
+                    &format!(
+                        "Failed to register hotkey: {}. Use tray menu instead. \
+                         Change hotkey in: {}",
+                        e, config_path
+                    ),
                 );
             }
 

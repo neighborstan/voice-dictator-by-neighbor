@@ -15,7 +15,7 @@ const ICON_SIZE: u32 = 32;
 static ICON_IDLE: LazyLock<Vec<u8>> = LazyLock::new(|| generate_circle_rgba(128, 128, 128));
 static ICON_RECORDING: LazyLock<Vec<u8>> = LazyLock::new(|| generate_circle_rgba(220, 50, 50));
 static ICON_PROCESSING: LazyLock<Vec<u8>> = LazyLock::new(|| generate_circle_rgba(50, 120, 220));
-static ICON_ERROR: LazyLock<Vec<u8>> = LazyLock::new(|| generate_circle_rgba(200, 30, 30));
+static ICON_ERROR: LazyLock<Vec<u8>> = LazyLock::new(|| generate_circle_rgba(255, 140, 0));
 
 /// Создает tray-иконку с начальным меню для состояния Idle.
 pub fn create_tray<R: Runtime>(
@@ -66,7 +66,7 @@ fn build_menu<R: Runtime>(
     let mut builder = MenuBuilder::new(app);
 
     // Action items (контекстные по состоянию)
-    let has_action = !matches!(state, AppState::Error);
+    let has_action = true; // All states now have an action element
     match state {
         AppState::Idle => {
             let start = MenuItem::with_id(
@@ -87,7 +87,11 @@ fn build_menu<R: Runtime>(
             let cancel = MenuItem::with_id(app, "cancel", "Cancel Processing", true, None::<&str>)?;
             builder = builder.item(&cancel);
         }
-        AppState::Error => {}
+        AppState::Error => {
+            let dismiss =
+                MenuItem::with_id(app, "dismiss_error", "Dismiss Error", true, None::<&str>)?;
+            builder = builder.item(&dismiss);
+        }
     }
 
     // Settings только для Idle и Error (как в плане задачи 8.2)
@@ -127,6 +131,7 @@ fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, menu_id: &str) {
             crate::dispatch_and_update(app, event);
         }
         "cancel" => crate::dispatch_and_update(app, AppEvent::Cancel),
+        "dismiss_error" => crate::dispatch_and_update(app, AppEvent::ErrorAcknowledged),
         "settings" => {
             tracing::info!("settings requested (not implemented yet)");
         }
@@ -280,6 +285,11 @@ mod tests {
         assert_ne!(idle.rgba(), recording.rgba());
         assert_ne!(recording.rgba(), processing.rgba());
         assert_ne!(idle.rgba(), error.rgba());
+        assert_ne!(
+            recording.rgba(),
+            error.rgba(),
+            "recording and error icons must be visually distinct"
+        );
     }
 
     #[test]
