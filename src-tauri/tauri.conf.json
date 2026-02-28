@@ -10,13 +10,7 @@
     "frontendDist": "../build"
   },
   "app": {
-    "windows": [
-      {
-        "title": "VoiceDictator",
-        "width": 600,
-        "height": 400
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": null
     }
