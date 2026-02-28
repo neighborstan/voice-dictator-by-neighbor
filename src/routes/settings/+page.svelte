@@ -80,7 +80,7 @@
       isOnboarding = false;
       showStatus("API key saved", "saved");
     } catch (e) {
-      statusMessage = `Failed to save API key: ${e}`;
+      showStatus(`Failed to save API key: ${e}`, "error");
     }
   }
 
@@ -113,10 +113,21 @@
 
   async function handleReset() {
     try {
+      const oldHotkey = config?.hotkey;
       config = await invoke<AppConfig>("reset_config");
+
+      if (oldHotkey && config && oldHotkey !== config.hotkey) {
+        try {
+          await invoke("update_hotkey", { hotkeyStr: config.hotkey });
+        } catch (e) {
+          showStatus(`Reset done, but hotkey update failed: ${e}`, "error");
+          return;
+        }
+      }
+
       showStatus("Reset to defaults", "saved");
     } catch (e) {
-      statusMessage = `Failed to reset: ${e}`;
+      showStatus(`Failed to reset: ${e}`, "error");
     }
   }
 
@@ -167,6 +178,7 @@
             bind:value={apiKeyInput}
             placeholder="sk-..."
             autocomplete="off"
+            autofocus={isOnboarding}
           />
         </div>
         <div class="api-key-actions">

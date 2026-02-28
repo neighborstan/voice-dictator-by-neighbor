@@ -86,7 +86,7 @@ async fn validate_api_key(
         .api_base_url
         .clone();
 
-    let url = format!("{}/v1/models", base_url);
+    let url = format!("{}/v1/models", base_url.trim_end_matches('/'));
     let client = reqwest::Client::new();
     let response = client
         .get(&url)
@@ -126,6 +126,8 @@ fn open_settings_onboarding<R: Runtime>(app: &AppHandle<R>) {
 
 fn open_settings_window_inner<R: Runtime>(app: &AppHandle<R>, url: WebviewUrl) {
     if let Some(window) = app.get_webview_window("settings") {
+        let _ = window.unminimize();
+        let _ = window.show();
         if let Err(e) = window.set_focus() {
             tracing::warn!(error = %e, "failed to focus settings window");
         }
