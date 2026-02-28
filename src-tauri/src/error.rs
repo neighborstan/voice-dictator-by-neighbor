@@ -12,7 +12,7 @@ pub enum AppError {
     Vad(#[from] crate::vad::VadError),
 
     #[error("STT error: {0}")]
-    Stt(String),
+    Stt(#[from] crate::stt::SttError),
 
     #[error("Enhance error: {0}")]
     Enhance(String),
@@ -76,7 +76,7 @@ mod tests {
     fn result_type_should_work_with_ok_and_err() {
         // Given / When
         let ok: Result<i32> = Ok(42);
-        let err: Result<i32> = Err(AppError::Stt("timeout".to_string()));
+        let err: Result<i32> = Err(AppError::Stt(crate::stt::SttError::Timeout));
 
         // Then
         assert!(ok.is_ok());

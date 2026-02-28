@@ -5,6 +5,7 @@ mod error;
 mod logging;
 mod paste;
 mod state;
+#[allow(dead_code, unused_imports)]
 mod stt;
 #[allow(dead_code, unused_imports)]
 mod vad;
