@@ -106,7 +106,10 @@ impl OpenAiSttClient {
                         return Err(e);
                     }
                     let attempt = self.retry_count - retries_left;
-                    let backoff_sec = (1u64 << attempt).min(MAX_BACKOFF_SEC);
+                    let backoff_sec = 1u64
+                        .checked_shl(attempt)
+                        .unwrap_or(MAX_BACKOFF_SEC)
+                        .min(MAX_BACKOFF_SEC);
                     tracing::warn!(
                         "STT request failed (retry {}/{}), backoff {backoff_sec}s: {e}",
                         attempt + 1,
@@ -169,6 +172,8 @@ impl OpenAiSttClient {
 
         let status = response.status();
 
+        // Обработка статусов дублирует enhance/openai_responses.rs - осознанное решение:
+        // модули используют разные Error-типы и могут разойтись по логике.
         if status == StatusCode::UNAUTHORIZED {
             return Err(SttError::AuthFailed);
         }
@@ -179,7 +184,8 @@ impl OpenAiSttClient {
                 .get(header::RETRY_AFTER)
                 .and_then(|v| v.to_str().ok())
                 .and_then(|v| v.parse::<u64>().ok())
-                .unwrap_or(5);
+                .unwrap_or(5)
+                .clamp(1, 60);
             return Err(SttError::RateLimited {
                 retry_after_sec: retry_after,
             });

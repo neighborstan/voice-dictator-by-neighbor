@@ -1,5 +1,6 @@
 mod audio;
 mod config;
+#[allow(dead_code, unused_imports)]
 mod enhance;
 mod error;
 mod logging;
