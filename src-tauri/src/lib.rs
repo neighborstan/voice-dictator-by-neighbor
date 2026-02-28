@@ -4,6 +4,7 @@ mod config;
 mod enhance;
 mod error;
 mod logging;
+#[allow(dead_code, unused_imports)]
 mod paste;
 mod state;
 #[allow(dead_code, unused_imports)]
