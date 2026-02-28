@@ -133,7 +133,7 @@ fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, menu_id: &str) {
         "cancel" => crate::dispatch_and_update(app, AppEvent::Cancel),
         "dismiss_error" => crate::dispatch_and_update(app, AppEvent::ErrorAcknowledged),
         "settings" => {
-            tracing::info!("settings requested (not implemented yet)");
+            crate::open_settings_window(app);
         }
         "quit" => {
             tracing::info!("quit requested from tray");
