@@ -164,4 +164,19 @@ mod tests {
         // Then
         assert_eq!(status, cloned);
     }
+
+    #[test]
+    fn pre_paste_delay_should_be_sufficient_for_clipboard_propagation() {
+        // Guard-тест: PRE_PASTE_DELAY_MS >= 100ms - Windows должен успеть
+        // распространить изменения clipboard до симуляции Ctrl+V.
+        // Слишком малое значение -> случайные ошибки вставки (вставляется старое содержимое).
+        const { assert!(PRE_PASTE_DELAY_MS >= 100) };
+    }
+
+    #[test]
+    fn restore_delay_should_be_sufficient_for_target_app() {
+        // Guard-тест: RESTORE_DELAY_MS >= 200ms - целевое приложение должно
+        // успеть обработать Ctrl+V до того, как мы перезапишем clipboard.
+        const { assert!(RESTORE_DELAY_MS >= 200) };
+    }
 }

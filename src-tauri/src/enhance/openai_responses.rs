@@ -497,6 +497,55 @@ mod tests {
             EnhanceError::InvalidResponse(_)
         ));
     }
+
+    #[test]
+    fn extract_output_text_should_ignore_output_items_without_content() {
+        // Given: смешанный вывод - reasoning-элемент (пустой content) и message-элемент (с текстом).
+        // Responses API может возвращать reasoning/служебные элементы без content-блоков.
+        let resp = ResponsesResponse {
+            output: vec![
+                OutputItem { content: vec![] },
+                OutputItem {
+                    content: vec![ContentBlock {
+                        text: "Corrected text.".to_string(),
+                    }],
+                },
+            ],
+        };
+
+        // When
+        let result = extract_output_text(&resp);
+
+        // Then
+        assert_eq!(result.unwrap(), "Corrected text.");
+    }
+
+    #[test]
+    fn extract_output_text_should_ignore_content_blocks_without_text() {
+        // Given: output item со смешанными content-блоками, часть имеет пустой text
+        // (например, refusal-блоки или image-блоки, которые десериализуются с "").
+        let resp = ResponsesResponse {
+            output: vec![OutputItem {
+                content: vec![
+                    ContentBlock {
+                        text: String::new(),
+                    },
+                    ContentBlock {
+                        text: "Real output.".to_string(),
+                    },
+                    ContentBlock {
+                        text: String::new(),
+                    },
+                ],
+            }],
+        };
+
+        // When
+        let result = extract_output_text(&resp);
+
+        // Then
+        assert_eq!(result.unwrap(), "Real output.");
+    }
 }
 
 #[cfg(test)]
@@ -786,5 +835,36 @@ mod integration_tests {
 
         // Then: timeout -> fallback to raw
         assert_eq!(result.unwrap(), "my text");
+    }
+
+    #[tokio::test]
+    async fn send_request_should_return_invalid_response_for_unparseable_json_body() {
+        // Given: сервер возвращает 200, но с невалидным JSON, который нельзя
+        // распарсить как ResponsesResponse. Ошибка должна быть InvalidResponse, не Network.
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/responses"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("{not valid json!}"))
+            .mount(&server)
+            .await;
+
+        let client = create_test_client(&server.uri()).await;
+        let instructions = build_instructions(None);
+
+        // When
+        let result = client
+            .send_request(
+                &format!("{}/v1/responses", server.uri()),
+                &instructions,
+                "test input",
+            )
+            .await;
+
+        // Then: error type must be InvalidResponse for diagnostic clarity
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, EnhanceError::InvalidResponse(_)),
+            "ожидался InvalidResponse, получено: {err:?}"
+        );
     }
 }

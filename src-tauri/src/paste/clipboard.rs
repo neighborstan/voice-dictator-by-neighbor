@@ -316,4 +316,29 @@ mod tests {
         let content = manager.read().unwrap();
         assert_eq!(content, Some("pasted text".to_string()));
     }
+
+    #[test]
+    #[serial]
+    fn paste_contract_save_write_restore_should_preserve_original_content() {
+        // Given: до запуска paste pipeline clipboard содержит исходный текст пользователя.
+        // Контракт paste_text: save -> write(диктованный текст) -> [симуляция вставки] -> restore.
+        // После pipeline clipboard должен содержать ИСХОДНЫЙ текст, не диктованный.
+        let _guard = ClipboardTestGuard::new();
+        let mut manager = ClipboardManager::new().unwrap();
+        manager.write("user's important data").unwrap();
+
+        // When: симуляция последовательности save -> write -> restore из paste_text
+        manager.save().unwrap();
+        manager.write("dictated text from STT").unwrap();
+
+        // Проверяем: диктованный текст в clipboard до restore
+        let mid_state = manager.read().unwrap();
+        assert_eq!(mid_state, Some("dictated text from STT".to_string()));
+
+        manager.restore().unwrap();
+
+        // Then: исходный текст восстановлен
+        let final_content = manager.read().unwrap();
+        assert_eq!(final_content, Some("user's important data".to_string()));
+    }
 }
