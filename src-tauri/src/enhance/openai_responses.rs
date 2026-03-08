@@ -138,7 +138,14 @@ impl OpenAiEnhancer {
                     continue;
                 }
                 Err(e) if !Self::is_retryable(&e) => {
-                    tracing::warn!("Enhance failed (non-retryable): {e}, returning raw text");
+                    if matches!(e, EnhanceError::Timeout) {
+                        tracing::warn!(
+                            timeout_sec = self.read_timeout.as_secs(),
+                            "Enhance timed out (server is slow), returning raw text"
+                        );
+                    } else {
+                        tracing::warn!("Enhance failed (non-retryable): {e}, returning raw text");
+                    }
                     return Ok(raw_text.to_string());
                 }
                 Err(e) => {
@@ -164,9 +171,13 @@ impl OpenAiEnhancer {
     }
 
     /// Определяет, стоит ли повторять запрос при данной ошибке.
+    ///
+    /// Timeout намеренно НЕ retryable: сервер принял запрос и генерирует ответ,
+    /// разрыв соединения и повторный запрос только увеличивают задержку и
+    /// стоимость. При timeout нужно либо ждать дольше, либо fallback к raw.
     fn is_retryable(err: &EnhanceError) -> bool {
         match err {
-            EnhanceError::Network(_) | EnhanceError::Timeout => true,
+            EnhanceError::Network(_) => true,
             EnhanceError::ApiError { status, .. } => *status >= 500,
             _ => false,
         }
@@ -353,8 +364,10 @@ mod tests {
     }
 
     #[test]
-    fn is_retryable_should_return_true_for_timeout() {
-        assert!(OpenAiEnhancer::is_retryable(&EnhanceError::Timeout));
+    fn is_retryable_should_return_false_for_timeout() {
+        // Timeout is not retryable: the server accepted the request and is
+        // generating. Retrying would cause a duplicate request and extra cost.
+        assert!(!OpenAiEnhancer::is_retryable(&EnhanceError::Timeout));
     }
 
     #[test]
