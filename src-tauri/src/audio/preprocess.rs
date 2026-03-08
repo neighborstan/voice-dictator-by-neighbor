@@ -6,9 +6,11 @@ pub const TARGET_SAMPLE_RATE: u32 = 16_000;
 #[allow(dead_code)]
 const ENERGY_FRAME_MS: u32 = 20;
 
-/// Порог RMS для определения тишины (подобрано эмпирически).
+/// Порог RMS для определения тишины.
+///
+/// 0.005 достаточно низкий, чтобы не считать тихую речь и паузы между словами за тишину.
 #[allow(dead_code)]
-const SILENCE_RMS_THRESHOLD: f32 = 0.01;
+const SILENCE_RMS_THRESHOLD: f32 = 0.005;
 
 /// Конвертирует multi-channel аудио в mono.
 ///
@@ -158,11 +160,13 @@ pub fn trim_trailing_silence(samples: &[f32], sample_rate: u32, min_silence_ms: 
 
 /// Обрезает тишину в начале и конце аудио.
 ///
-/// Дефолтные пороги: 200ms для начала, 500ms для конца.
+/// Leading: обрезает начальную тишину длиннее 500ms.
+/// Trailing: обрезает хвостовую тишину длиннее 2000ms.
+/// Высокий порог trailing предотвращает обрезку пауз между словами.
 #[allow(dead_code)]
 pub fn trim_silence(samples: &[f32], sample_rate: u32) -> &[f32] {
-    let trimmed = trim_leading_silence(samples, sample_rate, 200);
-    trim_trailing_silence(trimmed, sample_rate, 500)
+    let trimmed = trim_leading_silence(samples, sample_rate, 500);
+    trim_trailing_silence(trimmed, sample_rate, 2000)
 }
 
 #[cfg(test)]
@@ -407,10 +411,11 @@ mod tests {
 
     #[test]
     fn trim_silence_should_remove_both_leading_and_trailing() {
-        // Given: 400ms silence + 500ms tone + 700ms silence
-        let mut audio = generate_silence(16000, 400);
+        // Given: 800ms silence + 500ms tone + 3000ms silence
+        // Leading > 500ms threshold, trailing > 2000ms threshold
+        let mut audio = generate_silence(16000, 800);
         let tone = generate_tone(16000, 500, 440.0, 0.5);
-        let trailing = generate_silence(16000, 700);
+        let trailing = generate_silence(16000, 3000);
         audio.extend_from_slice(&tone);
         audio.extend_from_slice(&trailing);
         let original_len = audio.len();

@@ -100,6 +100,7 @@ impl ClipboardManager {
     /// - Текст доступен -> `Ok(Some(text))`
     /// - Нет текста / non-text содержимое -> `Ok(None)`
     /// - Прочие ошибки (occupied, system) -> `Err`
+    #[allow(dead_code)] // utility for future use (e.g. debug/testing)
     pub fn read(&mut self) -> super::Result<Option<String>> {
         match self.clipboard.get_text() {
             Ok(text) => Ok(Some(text)),

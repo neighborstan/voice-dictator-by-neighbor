@@ -6,10 +6,16 @@ use std::time::Duration;
 
 pub use self::clipboard::ClipboardManager;
 
+/// Задержка перед симуляцией Ctrl+V (мс).
+///
+/// Дает Windows время на распространение clipboard-изменений
+/// и стабилизацию фокуса окна.
+const PRE_PASTE_DELAY_MS: u64 = 150;
+
 /// Задержка перед восстановлением clipboard (мс).
 ///
 /// Дает приложению-получателю время обработать Ctrl+V.
-const RESTORE_DELAY_MS: u64 = 300;
+const RESTORE_DELAY_MS: u64 = 500;
 
 /// Ошибки модуля вставки текста.
 #[derive(Debug, thiserror::Error)]
@@ -70,6 +76,9 @@ pub fn paste_text(text: &str) -> PasteStatus {
         tracing::warn!("Failed to write to clipboard: {e}, falling back to ResultWindow");
         return PasteStatus::ResultWindow;
     }
+
+    // Let clipboard changes propagate and window focus stabilize
+    thread::sleep(Duration::from_millis(PRE_PASTE_DELAY_MS));
 
     if let Err(e) = input::simulate_paste() {
         tracing::warn!("Key simulation failed: {e}, text is in clipboard (ClipboardOnly mode)");

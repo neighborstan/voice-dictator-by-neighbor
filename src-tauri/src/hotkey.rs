@@ -2,7 +2,7 @@ use tauri::{AppHandle, Manager, Runtime};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
 use crate::config::schema::RecordingMode;
-use crate::state::{AppEvent, SharedAppState};
+use crate::state::{AppEvent, AppState, SharedAppState};
 
 /// Регистрирует глобальный хоткей из строки конфига.
 ///
@@ -33,10 +33,21 @@ pub fn on_shortcut_event<R: Runtime>(
 ) {
     let shared = app.state::<SharedAppState>();
     let mode = shared.recording_mode();
+    let current = shared.current_state();
+
+    // В любом режиме нажатие хоткея во время processing отменяет pipeline.
+    let is_processing = matches!(
+        current,
+        AppState::Transcribing | AppState::Enhancing | AppState::Pasting
+    );
 
     // NOTE: Toggle reacts on Pressed. If a platform only sends Released,
     // the hotkey will appear non-functional -- verify on target OS.
     let app_event = match (&mode, event.state) {
+        // Отмена processing независимо от режима записи
+        (_, ShortcutState::Pressed) if is_processing => AppEvent::Cancel,
+        (_, ShortcutState::Released) if is_processing => return,
+
         (RecordingMode::Toggle, ShortcutState::Pressed) => AppEvent::HotkeyPressed,
         (RecordingMode::Toggle, ShortcutState::Released) => return,
         (RecordingMode::PushToTalk, ShortcutState::Pressed) => AppEvent::HotkeyDown,

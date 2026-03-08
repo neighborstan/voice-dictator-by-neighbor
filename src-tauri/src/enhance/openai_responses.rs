@@ -53,11 +53,15 @@ struct ResponsesResponse {
 
 #[derive(Deserialize)]
 struct OutputItem {
+    /// Content blocks. Missing for non-message output types (e.g. reasoning).
+    #[serde(default)]
     content: Vec<ContentBlock>,
 }
 
 #[derive(Deserialize)]
 struct ContentBlock {
+    /// Text content. Missing for non-text content types (e.g. refusal).
+    #[serde(default)]
     text: String,
 }
 
@@ -222,9 +226,14 @@ impl OpenAiEnhancer {
             });
         }
 
-        let resp: ResponsesResponse = response
-            .json()
+        let body_text = response
+            .text()
             .await
+            .map_err(|e| EnhanceError::InvalidResponse(e.to_string()))?;
+
+        tracing::debug!(status = %status, "enhance API response received");
+
+        let resp: ResponsesResponse = serde_json::from_str(&body_text)
             .map_err(|e| EnhanceError::InvalidResponse(e.to_string()))?;
 
         extract_output_text(&resp)
