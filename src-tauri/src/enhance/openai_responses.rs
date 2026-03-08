@@ -231,7 +231,7 @@ impl OpenAiEnhancer {
             .await
             .map_err(|e| EnhanceError::InvalidResponse(e.to_string()))?;
 
-        tracing::debug!(body = %body_text, "enhance API raw response");
+        tracing::debug!(status = %status, "enhance API response received");
 
         let resp: ResponsesResponse = serde_json::from_str(&body_text)
             .map_err(|e| EnhanceError::InvalidResponse(e.to_string()))?;

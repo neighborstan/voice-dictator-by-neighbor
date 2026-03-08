@@ -455,10 +455,18 @@ fn show_result_window<R: Runtime>(app: &AppHandle<R>, text: &str) {
     *result.0.lock().expect("result mutex poisoned") = Some(text.to_string());
 
     if let Some(window) = app.get_webview_window("result") {
-        let _ = app.emit("result-text-updated", ());
-        let _ = window.unminimize();
-        let _ = window.show();
-        let _ = window.set_focus();
+        if let Err(e) = app.emit("result-text-updated", ()) {
+            tracing::warn!(error = %e, "failed to emit result-text-updated event");
+        }
+        if let Err(e) = window.unminimize() {
+            tracing::warn!(error = %e, "failed to unminimize result window");
+        }
+        if let Err(e) = window.show() {
+            tracing::warn!(error = %e, "failed to show result window");
+        }
+        if let Err(e) = window.set_focus() {
+            tracing::warn!(error = %e, "failed to focus result window");
+        }
         return;
     }
 
