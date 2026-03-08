@@ -92,10 +92,18 @@ fn paste_modifier_key() -> Key {
 
 /// Возвращает клавишу V для вставки.
 ///
-/// На Windows используем `Key::Unicode('v')` как наиболее совместимый вариант
-/// (enigo на Windows корректно маппит Unicode 'v' через виртуальный key code).
+/// На Windows используем `Key::V` (виртуальный key code), потому что
+/// `Key::Unicode('v')` вводится как текст, а не как виртуальная клавиша,
+/// и не работает в комбинации с модификаторами (Ctrl+V).
 fn paste_v_key() -> Key {
-    Key::Unicode('v')
+    #[cfg(target_os = "windows")]
+    {
+        Key::V
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Key::Unicode('v')
+    }
 }
 
 #[cfg(test)]
@@ -116,11 +124,14 @@ mod tests {
     }
 
     #[test]
-    fn paste_v_key_should_return_unicode_v() {
+    fn paste_v_key_should_return_virtual_key() {
         // Given / When
         let key = paste_v_key();
 
         // Then
+        #[cfg(target_os = "windows")]
+        assert_eq!(key, Key::V);
+        #[cfg(not(target_os = "windows"))]
         assert_eq!(key, Key::Unicode('v'));
     }
 }

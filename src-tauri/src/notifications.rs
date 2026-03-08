@@ -34,6 +34,16 @@ pub fn notify_error<R: Runtime>(app: &AppHandle<R>, message: &str) {
     }
 }
 
+/// Отправляет информационное уведомление.
+///
+/// Всегда показывается, независимо от `show_notifications` в конфиге.
+/// Для не-ошибочных ситуаций, требующих внимания пользователя.
+pub fn notify_info<R: Runtime>(app: &AppHandle<R>, message: &str) {
+    if let Err(e) = send_notification(app, "VoiceDictator", message) {
+        tracing::warn!(error = %e, "failed to send notification");
+    }
+}
+
 /// Возвращает (title, body) для уведомления при переходе состояний.
 /// Возвращает (title, body) для уведомления при переходе состояний.
 ///

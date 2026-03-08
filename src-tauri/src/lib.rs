@@ -1,15 +1,13 @@
 mod audio;
 mod config;
-#[allow(dead_code, unused_imports)]
 mod enhance;
 mod error;
 mod hotkey;
 mod logging;
 mod notifications;
-#[allow(dead_code, unused_imports)]
 mod paste;
+mod pipeline;
 mod state;
-#[allow(dead_code, unused_imports)]
 mod stt;
 mod tray;
 #[allow(dead_code, unused_imports)]
@@ -22,6 +20,7 @@ use tauri::{AppHandle, Manager, Runtime, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
 use crate::config::schema::AppConfig;
+use crate::pipeline::{PipelineState, ResultText};
 use crate::state::{AppEvent, AppState, SharedAppState};
 
 // --- Tauri commands ---
@@ -115,6 +114,12 @@ async fn validate_api_key(
     }
 }
 
+/// Возвращает текст из последнего результата pipeline (для Result window).
+#[tauri::command]
+fn get_result_text(result: tauri::State<'_, ResultText>) -> Option<String> {
+    result.0.lock().expect("result mutex poisoned").clone()
+}
+
 /// Перерегистрирует глобальный хоткей (unregister all + register new).
 #[tauri::command]
 fn update_hotkey(app: AppHandle, hotkey_str: String) -> Result<(), String> {
@@ -183,6 +188,25 @@ pub(crate) fn dispatch_and_update<R: Runtime>(app: &AppHandle<R>, event: AppEven
 
     tray::update_tray(app, new);
     notifications::notify_state_change(app, old, new);
+
+    // Pipeline side effects triggered by state transitions
+    handle_transition_side_effects(app, old, new);
+}
+
+/// Handles pipeline side effects triggered by state transitions.
+fn handle_transition_side_effects<R: Runtime>(app: &AppHandle<R>, old: AppState, new: AppState) {
+    match (old, new) {
+        (AppState::Idle, AppState::Recording) => {
+            pipeline::start_recording(app);
+        }
+        (AppState::Recording, AppState::Transcribing) => {
+            pipeline::stop_recording_and_run_pipeline(app);
+        }
+        (AppState::Transcribing | AppState::Enhancing | AppState::Pasting, AppState::Idle) => {
+            pipeline::cancel_pipeline(app);
+        }
+        _ => {}
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -209,6 +233,8 @@ pub fn run() {
         )
         .manage(SharedAppState::new(recording_mode))
         .manage(Mutex::new(app_config))
+        .manage(PipelineState::new())
+        .manage(ResultText::new())
         .invoke_handler(tauri::generate_handler![
             get_config,
             save_config,
@@ -217,6 +243,7 @@ pub fn run() {
             save_api_key,
             validate_api_key,
             update_hotkey,
+            get_result_text,
         ])
         .setup(move |app| {
             tray::create_tray(app)?;
