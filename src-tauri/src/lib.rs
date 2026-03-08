@@ -120,6 +120,17 @@ fn get_result_text(result: tauri::State<'_, ResultText>) -> Option<String> {
     result.0.lock().expect("result mutex poisoned").clone()
 }
 
+/// Копирует текст в системный буфер обмена через нативный API (arboard).
+#[tauri::command]
+fn copy_to_clipboard(text: String) -> Result<(), String> {
+    let mut clipboard =
+        arboard::Clipboard::new().map_err(|e| format!("Clipboard unavailable: {e}"))?;
+    clipboard
+        .set_text(&text)
+        .map_err(|e| format!("Failed to copy: {e}"))?;
+    Ok(())
+}
+
 /// Перерегистрирует глобальный хоткей (unregister all + register new).
 #[tauri::command]
 fn update_hotkey(app: AppHandle, hotkey_str: String) -> Result<(), String> {
@@ -244,6 +255,7 @@ pub fn run() {
             validate_api_key,
             update_hotkey,
             get_result_text,
+            copy_to_clipboard,
         ])
         .setup(move |app| {
             tray::create_tray(app)?;

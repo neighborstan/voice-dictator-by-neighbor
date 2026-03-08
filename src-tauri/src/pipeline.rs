@@ -24,11 +24,13 @@ const PASTE_SHORTCUT: &str = "Ctrl+V";
 
 /// Pipeline state managed by Tauri.
 ///
-/// Holds active audio capture, cancellation flag, and safety timeout handle.
+/// Хранит активный захват аудио, флаг отмены, таймаут безопасности
+/// и handle задачи pipeline для принудительного abort при отмене.
 pub struct PipelineState {
     capture: Mutex<Option<AudioCapture>>,
     cancel: Arc<AtomicBool>,
     timeout_handle: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
+    pipeline_handle: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
 }
 
 impl PipelineState {
@@ -37,6 +39,7 @@ impl PipelineState {
             capture: Mutex::new(None),
             cancel: Arc::new(AtomicBool::new(false)),
             timeout_handle: Mutex::new(None),
+            pipeline_handle: Mutex::new(None),
         }
     }
 }
@@ -58,6 +61,19 @@ impl ResultText {
 /// On error: transitions to Error -> Idle with notification.
 pub fn start_recording<R: Runtime>(app: &AppHandle<R>) {
     let pipeline = app.state::<PipelineState>();
+
+    // Прерываем оставшуюся задачу предыдущего pipeline, чтобы отмененный
+    // и сразу перезапущенный pipeline не "ожил" после возврата из await.
+    if let Some(old_handle) = pipeline
+        .pipeline_handle
+        .lock()
+        .expect("pipeline_handle mutex poisoned")
+        .take()
+    {
+        old_handle.abort();
+        tracing::debug!("aborted leftover pipeline task on new recording start");
+    }
+
     pipeline.cancel.store(false, Ordering::SeqCst);
 
     let mut capture = match AudioCapture::new() {
@@ -156,9 +172,14 @@ pub fn stop_recording_and_run_pipeline<R: Runtime>(app: &AppHandle<R>) {
     let cancel = Arc::clone(&pipeline.cancel);
     let app_handle = app.clone();
 
-    tauri::async_runtime::spawn(async move {
+    let handle = tauri::async_runtime::spawn(async move {
         run_pipeline(app_handle, audio, format, config, api_key, cancel).await;
     });
+
+    *pipeline
+        .pipeline_handle
+        .lock()
+        .expect("pipeline_handle mutex poisoned") = Some(handle);
 }
 
 /// Sets cancel flag to abort the running pipeline.
@@ -169,12 +190,25 @@ pub fn cancel_pipeline<R: Runtime>(app: &AppHandle<R>) {
     pipeline.cancel.store(true, Ordering::SeqCst);
     tracing::info!("pipeline cancellation requested");
 
-    let mut handle_guard = pipeline
+    let timeout = pipeline
         .timeout_handle
         .lock()
-        .expect("timeout mutex poisoned");
-    if let Some(handle) = handle_guard.take() {
+        .expect("timeout mutex poisoned")
+        .take();
+    if let Some(handle) = timeout {
         handle.abort();
+    }
+
+    // Прерываем задачу pipeline, чтобы гарантировать остановку даже если
+    // новая запись стартует и сбросит флаг cancel.
+    let task = pipeline
+        .pipeline_handle
+        .lock()
+        .expect("pipeline_handle mutex poisoned")
+        .take();
+    if let Some(handle) = task {
+        handle.abort();
+        tracing::debug!("pipeline task aborted");
     }
 }
 
@@ -454,6 +488,7 @@ mod tests {
         assert!(state.capture.lock().unwrap().is_none());
         assert!(!state.cancel.load(Ordering::SeqCst));
         assert!(state.timeout_handle.lock().unwrap().is_none());
+        assert!(state.pipeline_handle.lock().unwrap().is_none());
     }
 
     #[test]

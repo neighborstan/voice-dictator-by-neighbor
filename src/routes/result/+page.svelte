@@ -8,6 +8,7 @@
   let autoClose = $state(true);
   let countdown = $state(10);
   let copied = $state(false);
+  let copyError = $state("");
   let timer: ReturnType<typeof setInterval> | null = null;
   let unlisten: (() => void) | null = null;
 
@@ -47,13 +48,17 @@
 
   async function copyText() {
     try {
-      await navigator.clipboard.writeText(text);
+      await invoke("copy_to_clipboard", { text });
       copied = true;
+      copyError = "";
       setTimeout(() => {
         copied = false;
       }, 2000);
-    } catch {
-      // Browser clipboard API unavailable in this context
+    } catch (e) {
+      copyError = `${e}`;
+      setTimeout(() => {
+        copyError = "";
+      }, 5000);
     }
   }
 
@@ -98,6 +103,9 @@
     </button>
     <button class="btn btn-secondary" onclick={closeWindow}>Close</button>
   </div>
+  {#if copyError}
+    <div class="error">{copyError}</div>
+  {/if}
   <div class="auto-close">
     <label>
       <input
@@ -194,5 +202,15 @@
 
   .btn-secondary:hover {
     background: #e4e4e4;
+  }
+
+  .error {
+    margin-top: 8px;
+    padding: 6px 10px;
+    background: #fff0f0;
+    color: #c00;
+    border: 1px solid #fcc;
+    border-radius: 4px;
+    font-size: 12px;
   }
 </style>
