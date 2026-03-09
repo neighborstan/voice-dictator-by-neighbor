@@ -204,12 +204,6 @@ impl OpenAiSttClient {
             .await
             .map_err(|e| SttError::InvalidResponse(e.to_string()))?;
 
-        if body.text.trim().is_empty() {
-            return Err(SttError::InvalidResponse(
-                "empty transcription text".to_string(),
-            ));
-        }
-
         Ok(body.text)
     }
 }
@@ -516,8 +510,9 @@ mod integration_tests {
     }
 
     #[tokio::test]
-    async fn transcribe_should_fail_on_empty_text() {
-        // Given
+    async fn transcribe_should_return_empty_text_as_is() {
+        // Given: API возвращает только пробелы.
+        // STT клиент не интерпретирует содержимое - возвращает текст как есть.
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/v1/audio/transcriptions"))
@@ -533,7 +528,7 @@ mod integration_tests {
         let result = client.do_transcribe(&make_test_audio(), None).await;
 
         // Then
-        assert!(matches!(result.unwrap_err(), SttError::InvalidResponse(_)));
+        assert_eq!(result.unwrap(), "   ");
     }
 
     #[tokio::test]

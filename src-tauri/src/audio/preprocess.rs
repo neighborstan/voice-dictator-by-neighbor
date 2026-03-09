@@ -430,4 +430,84 @@ mod tests {
         let tolerance = (16000 * ENERGY_FRAME_MS / 1000) as usize * 2;
         assert!(result.len() <= tone_len + tolerance);
     }
+
+    // --- trim silence regression tests ---
+
+    #[test]
+    fn trim_silence_should_preserve_quiet_tail_speech_when_energy_drops_near_end() {
+        // Given: 1s громкой речи + 500ms тихой речи (амплитуда снижается к концу).
+        // Тихий хвост ниже SILENCE_RMS_THRESHOLD, но это реальная речь,
+        // которая стала тише (пользователь затухает к концу фразы).
+        // Порог trailing silence = 2000ms, поэтому 500ms тихий хвост НЕ обрезается.
+        let mut audio = generate_tone(16000, 1000, 440.0, 0.3);
+        let quiet_tail = generate_tone(16000, 500, 440.0, 0.003);
+        audio.extend_from_slice(&quiet_tail);
+
+        // When
+        let result = trim_silence(&audio, 16000);
+
+        // Then: тихий хвост (500ms) < порога trailing 2000ms,
+        // поэтому с конца ничего не обрезается.
+        assert_eq!(
+            result.len(),
+            audio.len(),
+            "тихий хвост (500ms) должен быть сохранен - короче порога trailing 2000ms"
+        );
+    }
+
+    #[test]
+    fn trim_silence_should_not_cut_middle_pause_shorter_than_trailing_threshold() {
+        // Given: 1s речи + 1.5s паузы + 1s речи.
+        // Пауза 1.5s меньше порога trailing 2000ms,
+        // поэтому второй блок речи НЕ должен быть обрезан.
+        let speech1 = generate_tone(16000, 1000, 440.0, 0.3);
+        let pause = generate_silence(16000, 1500);
+        let speech2 = generate_tone(16000, 1000, 440.0, 0.3);
+        let mut audio = speech1;
+        audio.extend_from_slice(&pause);
+        audio.extend_from_slice(&speech2);
+
+        // When
+        let result = trim_silence(&audio, 16000);
+
+        // Then: trailing trim идет с конца и находит speech2 -
+        // ничего не обрезается. Leading trim сразу находит speech1.
+        assert_eq!(
+            result.len(),
+            audio.len(),
+            "средняя пауза (1.5s) не должна приводить к обрезке, так как после неё есть речь"
+        );
+    }
+
+    #[test]
+    fn trim_silence_should_remove_only_true_long_trailing_silence() {
+        // Given: 1s речи + 500ms паузы + 500ms речи + 3s trailing silence.
+        // Только 3s тишины в конце должны быть удалены.
+        // 500ms средняя пауза и все блоки речи должны быть сохранены.
+        let speech1 = generate_tone(16000, 1000, 440.0, 0.3);
+        let pause = generate_silence(16000, 500);
+        let speech2 = generate_tone(16000, 500, 440.0, 0.3);
+        let trailing = generate_silence(16000, 3000);
+        let mut audio = speech1.clone();
+        audio.extend_from_slice(&pause);
+        audio.extend_from_slice(&speech2);
+        let speech_total_len = audio.len();
+        audio.extend_from_slice(&trailing);
+
+        // When
+        let result = trim_silence(&audio, 16000);
+
+        // Then: trailing silence (3s > порога 2000ms) удалена.
+        // Результат содержит всю речь + паузу, но не trailing silence.
+        let frame_tolerance = (16000 * ENERGY_FRAME_MS / 1000) as usize;
+        assert!(
+            result.len() >= speech_total_len - frame_tolerance,
+            "всё речевое содержимое должно быть сохранено (ожидалось ~{speech_total_len}, получено {})",
+            result.len()
+        );
+        assert!(
+            result.len() < audio.len(),
+            "trailing silence (3s) должна быть обрезана"
+        );
+    }
 }

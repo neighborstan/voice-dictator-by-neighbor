@@ -96,7 +96,7 @@ impl Default for AppConfig {
             api_base_url: "https://api.openai.com".to_string(),
             connect_timeout_sec: 5,
             read_timeout_stt_sec: 30,
-            read_timeout_enhance_sec: 15,
+            read_timeout_enhance_sec: 30,
             retry_count: 3,
             log_level: "info".to_string(),
             debug_save_audio: false,
@@ -130,7 +130,7 @@ mod tests {
         assert_eq!(config.api_base_url, "https://api.openai.com");
         assert_eq!(config.connect_timeout_sec, 5);
         assert_eq!(config.read_timeout_stt_sec, 30);
-        assert_eq!(config.read_timeout_enhance_sec, 15);
+        assert_eq!(config.read_timeout_enhance_sec, 30);
         assert_eq!(config.retry_count, 3);
         assert_eq!(config.log_level, "info");
         assert!(!config.debug_save_audio);

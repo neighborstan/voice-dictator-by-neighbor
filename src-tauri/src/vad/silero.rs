@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use ndarray::Array3;
 use ort::session::Session;
 use ort::value::{Tensor, TensorRef};
@@ -12,6 +10,9 @@ const STATE_DIM: usize = 128;
 /// Sample rate (Silero VAD работает на 16kHz).
 const SAMPLE_RATE: i64 = 16000;
 
+/// Модель Silero VAD v5 вшита в бинарник.
+static MODEL_BYTES: &[u8] = include_bytes!("../../resources/silero_vad.onnx");
+
 /// Silero VAD через ONNX Runtime.
 ///
 /// Выполняет инференс модели Silero VAD v5 для детекции речи/тишины
@@ -23,15 +24,16 @@ pub struct SileroVad {
 }
 
 impl SileroVad {
-    /// Загружает модель и создает VAD с заданным порогом вероятности речи.
+    /// Инициализирует VAD с заданным порогом вероятности речи.
     ///
+    /// Модель вшита в бинарник — внешние файлы не нужны.
     /// `threshold` - порог вероятности (0.0..1.0), стандарт: 0.5.
-    pub fn new(model_path: &Path, threshold: f32) -> super::Result<Self> {
+    pub fn new(threshold: f32) -> super::Result<Self> {
         let session = Session::builder()
             .map_err(|e| VadError::ModelLoadFailed(e.to_string()))?
             .with_intra_threads(1)
             .map_err(|e| VadError::ModelLoadFailed(e.to_string()))?
-            .commit_from_file(model_path)
+            .commit_from_memory(MODEL_BYTES)
             .map_err(|e| VadError::ModelLoadFailed(e.to_string()))?;
 
         Ok(Self {
