@@ -306,10 +306,11 @@ pub(crate) async fn process_audio(
     };
 
     let raw_text = match stt::transcribe_audio(
-        &stt_client,
+        Arc::new(stt_client),
         &trimmed,
         TARGET_SAMPLE_RATE,
         language,
+        None,
         None,
     )
     .await
