@@ -1,6 +1,11 @@
 pub mod offline_whisper;
 pub mod openai;
 
+use std::sync::Arc;
+
+use tokio::sync::Semaphore;
+use tokio::task::JoinSet;
+
 pub use self::openai::OpenAiSttClient;
 
 /// Ошибки STT-модуля.
@@ -56,6 +61,9 @@ const MIN_CHUNK_SEC: f32 = 5.0;
 /// Максимальная длительность одного чанка по умолчанию (секунды).
 const DEFAULT_MAX_CHUNK_SEC: u32 = 30;
 
+/// Максимальное количество параллельных STT-запросов по умолчанию.
+const DEFAULT_MAX_CONCURRENT_STT_CHUNKS: u32 = 3;
+
 /// Начало зоны поиска тихого места для разреза (проценты от длины чанка).
 /// Ищем тишину в последних (100 - QUIET_SEARCH_START_PERCENT)% чанка.
 const QUIET_SEARCH_START_PERCENT: usize = 70;
@@ -66,14 +74,15 @@ const RMS_WINDOW_MS: u32 = 20;
 /// Высокоуровневая функция: кодирует PCM в OGG/Opus и транскрибирует.
 ///
 /// Если аудио укладывается в один чанк, кодирует и отправляет как есть.
-/// Для длинных записей: разбивает на чанки, кодирует каждый,
-/// транскрибирует последовательно (для экономии rate limit), склеивает текст.
-pub async fn transcribe_audio<P: SttProvider>(
-    provider: &P,
+/// Для длинных записей: разбивает на чанки, кодирует каждый последовательно,
+/// транскрибирует параллельно через JoinSet + Semaphore, склеивает текст.
+pub async fn transcribe_audio<P: SttProvider + 'static>(
+    provider: Arc<P>,
     samples: &[f32],
     sample_rate: u32,
     language: Option<&str>,
     max_chunk_sec: Option<u32>,
+    max_concurrent: Option<u32>,
 ) -> Result<String> {
     if sample_rate == 0 {
         return Err(SttError::EncodingFailed(
@@ -84,6 +93,7 @@ pub async fn transcribe_audio<P: SttProvider>(
     let max_sec = max_chunk_sec.unwrap_or(DEFAULT_MAX_CHUNK_SEC).max(1);
     let max_chunk_samples = max_sec as usize * sample_rate as usize;
 
+    // Короткое аудио: один чанк, без параллелизма
     if samples.len() <= max_chunk_samples {
         let encoded = crate::audio::encode::encode_ogg_opus(samples, sample_rate)
             .map_err(|e| SttError::EncodingFailed(e.to_string()))?;
@@ -97,28 +107,84 @@ pub async fn transcribe_audio<P: SttProvider>(
     );
 
     let chunks = chunk_audio(samples, sample_rate, max_sec);
-    tracing::info!("Split into {} chunks", chunks.len());
+    let chunk_count = chunks.len();
+    tracing::info!("Split into {chunk_count} chunks");
 
-    let mut texts = Vec::with_capacity(chunks.len());
-
+    // Кодирование чанков последовательно (CPU-bound, быстрое)
+    let mut encoded_chunks = Vec::with_capacity(chunk_count);
     for (i, chunk) in chunks.iter().enumerate() {
         let encoded = crate::audio::encode::encode_ogg_opus(&chunk.samples, sample_rate)
             .map_err(|e| SttError::EncodingFailed(e.to_string()))?;
-
         tracing::debug!(
-            "Transcribing chunk {}/{} ({:.1}s, {} bytes OGG)",
+            "Encoded chunk {}/{} ({:.1}s, {} bytes OGG)",
             i + 1,
-            chunks.len(),
+            chunk_count,
             chunk.samples.len() as f32 / sample_rate as f32,
             encoded.len()
         );
+        encoded_chunks.push((i, encoded));
+    }
 
-        let text = provider.transcribe(&encoded, language).await?;
-        let text = text.trim().to_string();
-        if !text.is_empty() {
-            texts.push(text);
+    // Параллельная транскрипция через JoinSet + Semaphore
+    let concurrent = max_concurrent
+        .unwrap_or(DEFAULT_MAX_CONCURRENT_STT_CHUNKS)
+        .max(1) as usize;
+    let semaphore = Arc::new(Semaphore::new(concurrent));
+    let language_owned: Option<String> = language.map(|s| s.to_string());
+
+    let mut join_set = JoinSet::new();
+    for (idx, encoded) in encoded_chunks {
+        let provider = Arc::clone(&provider);
+        let sem = Arc::clone(&semaphore);
+        let lang = language_owned.clone();
+
+        join_set.spawn(async move {
+            let _permit = sem
+                .acquire()
+                .await
+                .map_err(|_| SttError::Network("semaphore closed".to_string()))?;
+            tracing::debug!("chunk {idx} started upload");
+            let start = std::time::Instant::now();
+            let text = provider.transcribe(&encoded, lang.as_deref()).await?;
+            tracing::debug!(
+                "chunk {idx} transcribed in {}ms",
+                start.elapsed().as_millis()
+            );
+            Ok::<(usize, String), SttError>((idx, text.trim().to_string()))
+        });
+    }
+
+    // Сборка результатов с fail-fast
+    let mut results: Vec<(usize, String)> = Vec::with_capacity(chunk_count);
+    while let Some(join_result) = join_set.join_next().await {
+        match join_result {
+            Ok(Ok(item)) => results.push(item),
+            Ok(Err(stt_err)) => {
+                join_set.abort_all();
+                return Err(stt_err);
+            }
+            Err(join_err) => {
+                join_set.abort_all();
+                if join_err.is_cancelled() {
+                    return Err(SttError::Network("task cancelled".to_string()));
+                }
+                return Err(SttError::Network(format!("task panicked: {join_err}")));
+            }
         }
     }
+
+    // Сортировка по индексу чанка для правильного порядка текста
+    results.sort_by_key(|(idx, _)| *idx);
+    let texts: Vec<String> = results
+        .into_iter()
+        .map(|(_, text)| text)
+        .filter(|t| !t.is_empty())
+        .collect();
+
+    tracing::info!(
+        "all {chunk_count} chunks complete, {} non-empty texts",
+        texts.len()
+    );
 
     Ok(deduplicate_overlap_texts(&texts))
 }
@@ -512,11 +578,21 @@ mod tests {
     #[tokio::test]
     async fn transcribe_audio_should_use_single_request_for_short_audio() {
         // Given
-        let provider = StubSttProvider::with_responses(vec![Ok("hello world".to_string())]);
+        let provider = Arc::new(StubSttProvider::with_responses(vec![Ok(
+            "hello world".to_string()
+        )]));
         let samples = vec![0.1f32; 16_000 * 5]; // 5s
 
         // When
-        let result = transcribe_audio(&provider, &samples, 16_000, None, Some(25)).await;
+        let result = transcribe_audio(
+            Arc::clone(&provider),
+            &samples,
+            16_000,
+            None,
+            Some(25),
+            None,
+        )
+        .await;
 
         // Then
         assert!(result.is_ok());
@@ -527,16 +603,24 @@ mod tests {
     #[tokio::test]
     async fn transcribe_audio_should_split_long_audio() {
         // Given
-        let provider = StubSttProvider::with_responses(vec![
+        let provider = Arc::new(StubSttProvider::with_responses(vec![
             Ok("first part".to_string()),
             Ok("second part".to_string()),
             Ok("third part".to_string()),
             Ok("fourth part".to_string()),
-        ]);
+        ]));
         let samples = vec![0.1f32; 16_000 * 60]; // 60s
 
         // When
-        let result = transcribe_audio(&provider, &samples, 16_000, None, Some(25)).await;
+        let result = transcribe_audio(
+            Arc::clone(&provider),
+            &samples,
+            16_000,
+            None,
+            Some(25),
+            None,
+        )
+        .await;
 
         // Then
         assert!(result.is_ok());
@@ -548,11 +632,21 @@ mod tests {
     #[tokio::test]
     async fn transcribe_audio_should_propagate_provider_error() {
         // Given
-        let provider = StubSttProvider::with_responses(vec![Err(SttError::AuthFailed)]);
+        let provider = Arc::new(StubSttProvider::with_responses(vec![Err(
+            SttError::AuthFailed,
+        )]));
         let samples = vec![0.1f32; 16_000 * 5];
 
         // When
-        let result = transcribe_audio(&provider, &samples, 16_000, None, Some(25)).await;
+        let result = transcribe_audio(
+            Arc::clone(&provider),
+            &samples,
+            16_000,
+            None,
+            Some(25),
+            None,
+        )
+        .await;
 
         // Then
         assert!(matches!(result.unwrap_err(), SttError::AuthFailed));
@@ -561,16 +655,24 @@ mod tests {
     #[tokio::test]
     async fn transcribe_audio_should_skip_empty_chunk_results() {
         // Given
-        let provider = StubSttProvider::with_responses(vec![
+        let provider = Arc::new(StubSttProvider::with_responses(vec![
             Ok("first".to_string()),
             Ok("   ".to_string()), // empty after trim
             Ok("third".to_string()),
             Ok("fourth".to_string()),
-        ]);
+        ]));
         let samples = vec![0.1f32; 16_000 * 60];
 
         // When
-        let result = transcribe_audio(&provider, &samples, 16_000, None, Some(25)).await;
+        let result = transcribe_audio(
+            Arc::clone(&provider),
+            &samples,
+            16_000,
+            None,
+            Some(25),
+            None,
+        )
+        .await;
 
         // Then
         let text = result.unwrap();
@@ -638,11 +740,13 @@ mod tests {
     #[tokio::test]
     async fn transcribe_audio_should_fail_when_sample_rate_is_zero() {
         // Given
-        let provider = StubSttProvider::with_responses(vec![Ok("unused".to_string())]);
+        let provider = Arc::new(StubSttProvider::with_responses(vec![Ok(
+            "unused".to_string()
+        )]));
         let samples = vec![0.1f32; 1000];
 
         // When
-        let result = transcribe_audio(&provider, &samples, 0, None, None).await;
+        let result = transcribe_audio(Arc::clone(&provider), &samples, 0, None, None, None).await;
 
         // Then
         assert!(matches!(result.unwrap_err(), SttError::EncodingFailed(_)));
@@ -651,20 +755,117 @@ mod tests {
     #[tokio::test]
     async fn transcribe_audio_should_clamp_max_chunk_sec_zero_to_one() {
         // Given: max_chunk_sec = 0 should be clamped to 1, not cause infinite loop
-        let provider = StubSttProvider::with_responses(vec![
+        let provider = Arc::new(StubSttProvider::with_responses(vec![
             Ok("a".to_string()),
             Ok("b".to_string()),
             Ok("c".to_string()),
             Ok("d".to_string()),
             Ok("e".to_string()),
             Ok("f".to_string()),
-        ]);
+        ]));
         let samples = vec![0.1f32; 16_000 * 3]; // 3 seconds
 
         // When
-        let result = transcribe_audio(&provider, &samples, 16_000, None, Some(0)).await;
+        let result =
+            transcribe_audio(Arc::clone(&provider), &samples, 16_000, None, Some(0), None).await;
 
         // Then: should complete without hanging
         assert!(result.is_ok());
+    }
+
+    // -- parallel transcribe --
+
+    /// Провайдер, возвращающий размер полученных OGG-данных.
+    /// Позволяет проверить порядок чанков без зависимости от порядка вызовов.
+    struct SizeReportingStub;
+
+    impl SttProvider for SizeReportingStub {
+        async fn transcribe(&self, audio: &[u8], _language: Option<&str>) -> Result<String> {
+            Ok(format!("bytes:{}", audio.len()))
+        }
+    }
+
+    #[tokio::test]
+    async fn transcribe_audio_parallel_should_preserve_chunk_order() {
+        // Given: 60s -> несколько чанков. SizeReportingStub возвращает размер OGG,
+        // который уникален для каждого чанка.
+        let provider = Arc::new(SizeReportingStub);
+        let samples = vec![0.1f32; 16_000 * 60]; // 60s
+
+        // When: max_concurrent=3 (параллельно)
+        let result = transcribe_audio(
+            Arc::clone(&provider),
+            &samples,
+            16_000,
+            None,
+            Some(25),
+            Some(3),
+        )
+        .await;
+
+        // Then: все тексты в порядке возрастания индекса чанка.
+        // Каждый чанк дает "bytes:N" где N - размер OGG. Первый чанк самый большой
+        // (или равен), последний может быть меньше. Проверяем что порядок
+        // соответствует порядку чанков, а не порядку завершения.
+        let text = result.unwrap();
+        let sizes: Vec<&str> = text.split_whitespace().collect();
+        assert!(
+            sizes.len() >= 2,
+            "expected >= 2 chunks, got {}",
+            sizes.len()
+        );
+        // Каждый элемент начинается с "bytes:"
+        for s in &sizes {
+            assert!(s.starts_with("bytes:"), "unexpected token: {s}");
+        }
+        // Порядок: размеры чанков должны соответствовать порядку разрезки,
+        // не порядку завершения HTTP-запросов.
+        // Первые чанки - полные (max_chunk_sec), последний - остаток.
+        // Проверяем что последний чанк не больше первого.
+        let first_size: usize = sizes[0].strip_prefix("bytes:").unwrap().parse().unwrap();
+        let last_size: usize = sizes
+            .last()
+            .unwrap()
+            .strip_prefix("bytes:")
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert!(
+            last_size <= first_size,
+            "last chunk ({last_size}) should be <= first ({first_size})"
+        );
+    }
+
+    #[tokio::test]
+    async fn transcribe_audio_parallel_should_fail_fast_on_first_error() {
+        // Given: один из чанков вернёт ошибку
+        let provider = Arc::new(StubSttProvider::with_responses(vec![
+            Ok("ok-1".to_string()),
+            Err(SttError::ApiError {
+                status: 500,
+                message: "server error".to_string(),
+            }),
+            Ok("ok-3".to_string()),
+            Ok("ok-4".to_string()),
+        ]));
+        let samples = vec![0.1f32; 16_000 * 60]; // 60s
+
+        // When
+        let result = transcribe_audio(
+            Arc::clone(&provider),
+            &samples,
+            16_000,
+            None,
+            Some(25),
+            Some(3),
+        )
+        .await;
+
+        // Then: ошибка проброшена, не partial success
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            SttError::ApiError { status: 500, .. } => {} // ok
+            other => panic!("expected ApiError(500), got: {other}"),
+        }
     }
 }

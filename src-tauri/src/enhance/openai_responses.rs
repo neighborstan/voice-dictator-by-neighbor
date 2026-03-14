@@ -14,6 +14,14 @@ const MAX_RATE_LIMIT_RETRIES: u32 = 5;
 /// Верхняя граница задержки backoff (секунды).
 const MAX_BACKOFF_SEC: u64 = 16;
 
+/// Нагрузка reasoning-процессора модели при enhance-запросе.
+/// "minimal" - минимальный reasoning, достаточный для нормализации текста.
+const REASONING_EFFORT: &str = "minimal";
+
+/// Многословность ответа модели.
+/// "low" - сжатый ответ без пояснений.
+const TEXT_VERBOSITY: &str = "low";
+
 const SYSTEM_PROMPT: &str = "\
 You are a text post-processor. Fix punctuation, grammar, and normalize \
 spacing/capitalization in the following dictated text. Do NOT change meaning, \
@@ -44,23 +52,62 @@ struct ResponsesRequest {
     model: String,
     instructions: String,
     input: String,
+    reasoning: ReasoningParam,
+    text: TextParam,
+}
+
+#[derive(Serialize)]
+struct ReasoningParam {
+    effort: String,
+}
+
+#[derive(Serialize)]
+struct TextParam {
+    verbosity: String,
 }
 
 #[derive(Deserialize)]
 struct ResponsesResponse {
     output: Vec<OutputItem>,
+    #[serde(default)]
+    usage: Option<UsageInfo>,
 }
 
 #[derive(Deserialize)]
+struct UsageInfo {
+    #[serde(default)]
+    input_tokens: u32,
+    #[serde(default)]
+    output_tokens: u32,
+    #[serde(default)]
+    output_tokens_details: Option<OutputTokensDetails>,
+}
+
+#[derive(Deserialize, Default)]
+struct OutputTokensDetails {
+    #[serde(default)]
+    reasoning_tokens: u32,
+}
+
+#[derive(Deserialize, Default)]
 struct OutputItem {
-    /// Content blocks. Missing for non-message output types (e.g. reasoning).
+    /// Тип элемента вывода (например: "message", "reasoning").
+    #[serde(rename = "type", default)]
+    r#type: String,
+    /// Статус обработки (например: "completed", "in_progress").
+    #[serde(default)]
+    status: String,
+    /// Блоки содержимого. Присутствуют только у items типа "message".
     #[serde(default)]
     content: Vec<ContentBlock>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 struct ContentBlock {
-    /// Text content. Missing for non-text content types (e.g. refusal).
+    /// Тип блока содержимого (например: "output_text", "refusal").
+    #[serde(rename = "type", default)]
+    r#type: String,
+    /// Текст. Присутствует только у блоков типа "output_text".
     #[serde(default)]
     text: String,
 }
@@ -189,6 +236,12 @@ impl OpenAiEnhancer {
             model: self.model.clone(),
             instructions: instructions.to_string(),
             input: input.to_string(),
+            reasoning: ReasoningParam {
+                effort: REASONING_EFFORT.to_string(),
+            },
+            text: TextParam {
+                verbosity: TEXT_VERBOSITY.to_string(),
+            },
         };
 
         let response = self
@@ -247,6 +300,66 @@ impl OpenAiEnhancer {
         let resp: ResponsesResponse = serde_json::from_str(&body_text)
             .map_err(|e| EnhanceError::InvalidResponse(e.to_string()))?;
 
+        if let Some(usage) = &resp.usage {
+            let reasoning = usage
+                .output_tokens_details
+                .as_ref()
+                .map(|d| d.reasoning_tokens)
+                .unwrap_or(0);
+            tracing::info!(
+                input_tokens = usage.input_tokens,
+                output_tokens = usage.output_tokens,
+                reasoning_tokens = reasoning,
+                "enhance API usage"
+            );
+        }
+
+        {
+            let item_types = resp
+                .output
+                .iter()
+                .map(|i| i.r#type.as_str())
+                .collect::<Vec<_>>()
+                .join(",");
+            let item_statuses = resp
+                .output
+                .iter()
+                .map(|i| i.status.as_str())
+                .collect::<Vec<_>>()
+                .join(",");
+            let content_types = resp
+                .output
+                .iter()
+                .flat_map(|i| i.content.iter())
+                .map(|c| c.r#type.as_str())
+                .collect::<Vec<_>>()
+                .join(",");
+            let text_lens = resp
+                .output
+                .iter()
+                .flat_map(|i| i.content.iter())
+                .filter(|c| !c.text.is_empty())
+                .map(|c| c.text.len().to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+            let (in_tokens, out_tokens) = resp
+                .usage
+                .as_ref()
+                .map(|u| (u.input_tokens, u.output_tokens))
+                .unwrap_or((0, 0));
+            tracing::debug!(
+                "enhance response: items={} item_types=[{}] item_statuses=[{}] \
+                 content_types=[{}] text_lens=[{}] usage_in={} usage_out={}",
+                resp.output.len(),
+                item_types,
+                item_statuses,
+                content_types,
+                text_lens,
+                in_tokens,
+                out_tokens
+            );
+        }
+
         extract_output_text(&resp)
     }
 }
@@ -266,11 +379,16 @@ fn build_instructions(language: Option<&str>) -> String {
 }
 
 /// Извлекает текст из ответа Responses API.
+///
+/// Берёт только items с `type == "message"` и content-блоки с `type == "output_text"`,
+/// чтобы не включать reasoning-traces и служебные элементы в финальный текст.
 fn extract_output_text(resp: &ResponsesResponse) -> Result<String> {
     let text: String = resp
         .output
         .iter()
+        .filter(|item| item.r#type.is_empty() || item.r#type == "message")
         .flat_map(|item| item.content.iter())
+        .filter(|block| block.r#type.is_empty() || block.r#type == "output_text")
         .map(|block| block.text.as_str())
         .collect();
 
@@ -365,8 +483,8 @@ mod tests {
 
     #[test]
     fn is_retryable_should_return_false_for_timeout() {
-        // Timeout is not retryable: the server accepted the request and is
-        // generating. Retrying would cause a duplicate request and extra cost.
+        // Timeout намеренно не retryable: сервер принял запрос и генерирует ответ.
+        // Повторный запрос создаст дубль и увеличит стоимость.
         assert!(!OpenAiEnhancer::is_retryable(&EnhanceError::Timeout));
     }
 
@@ -428,8 +546,11 @@ mod tests {
             output: vec![OutputItem {
                 content: vec![ContentBlock {
                     text: "Hello, world!".to_string(),
+                    ..Default::default()
                 }],
+                ..Default::default()
             }],
+            usage: None,
         };
 
         // When
@@ -447,12 +568,16 @@ mod tests {
                 content: vec![
                     ContentBlock {
                         text: "Hello, ".to_string(),
+                        ..Default::default()
                     },
                     ContentBlock {
                         text: "world!".to_string(),
+                        ..Default::default()
                     },
                 ],
+                ..Default::default()
             }],
+            usage: None,
         };
 
         // When
@@ -465,7 +590,10 @@ mod tests {
     #[test]
     fn extract_output_text_should_fail_on_empty_output() {
         // Given
-        let resp = ResponsesResponse { output: vec![] };
+        let resp = ResponsesResponse {
+            output: vec![],
+            usage: None,
+        };
 
         // When
         let result = extract_output_text(&resp);
@@ -484,8 +612,11 @@ mod tests {
             output: vec![OutputItem {
                 content: vec![ContentBlock {
                     text: "   ".to_string(),
+                    ..Default::default()
                 }],
+                ..Default::default()
             }],
+            usage: None,
         };
 
         // When
@@ -504,13 +635,19 @@ mod tests {
         // Responses API может возвращать reasoning/служебные элементы без content-блоков.
         let resp = ResponsesResponse {
             output: vec![
-                OutputItem { content: vec![] },
+                OutputItem {
+                    content: vec![],
+                    ..Default::default()
+                },
                 OutputItem {
                     content: vec![ContentBlock {
                         text: "Corrected text.".to_string(),
+                        ..Default::default()
                     }],
+                    ..Default::default()
                 },
             ],
+            usage: None,
         };
 
         // When
@@ -518,6 +655,39 @@ mod tests {
 
         // Then
         assert_eq!(result.unwrap(), "Corrected text.");
+    }
+
+    #[test]
+    fn extract_output_text_should_skip_reasoning_items() {
+        // Given: API возвращает reasoning-item (type="reasoning") и message-item (type="message").
+        // reasoning-item не должен попасть в финальный текст, даже если у него есть content.
+        let resp = ResponsesResponse {
+            output: vec![
+                OutputItem {
+                    r#type: "reasoning".to_string(),
+                    content: vec![ContentBlock {
+                        r#type: "output_text".to_string(),
+                        text: "internal reasoning trace".to_string(),
+                    }],
+                    ..Default::default()
+                },
+                OutputItem {
+                    r#type: "message".to_string(),
+                    content: vec![ContentBlock {
+                        r#type: "output_text".to_string(),
+                        text: "Final answer.".to_string(),
+                    }],
+                    ..Default::default()
+                },
+            ],
+            usage: None,
+        };
+
+        // When
+        let result = extract_output_text(&resp);
+
+        // Then: только message-item попадает в результат
+        assert_eq!(result.unwrap(), "Final answer.");
     }
 
     #[test]
@@ -529,15 +699,20 @@ mod tests {
                 content: vec![
                     ContentBlock {
                         text: String::new(),
+                        ..Default::default()
                     },
                     ContentBlock {
                         text: "Real output.".to_string(),
+                        ..Default::default()
                     },
                     ContentBlock {
                         text: String::new(),
+                        ..Default::default()
                     },
                 ],
+                ..Default::default()
             }],
+            usage: None,
         };
 
         // When
@@ -612,16 +787,16 @@ mod integration_tests {
 
         let client = create_test_client(&server.uri()).await;
 
-        // When: empty output means InvalidResponse, which is non-retryable -> fallback
+        // When: пустой output → InvalidResponse (non-retryable) → fallback
         let result = client.do_enhance("hello world", None).await;
 
-        // Then: should return raw text
+        // Then: возвращается исходный текст
         assert_eq!(result.unwrap(), "hello world");
     }
 
     #[tokio::test]
     async fn enhance_should_fallback_on_hallucination() {
-        // Given: model returns much more text than input
+        // Given: модель возвращает значительно больше текста, чем во входе
         let server = MockServer::start().await;
         let hallucinated = "this is a very long hallucinated response that has way too many \
             words compared to the original input text and should be detected as a hallucination \
@@ -640,13 +815,13 @@ mod integration_tests {
         // When
         let result = client.do_enhance("hello world test", None).await;
 
-        // Then: fallback to raw text due to hallucination
+        // Then: fallback к исходному тексту — обнаружена галлюцинация
         assert_eq!(result.unwrap(), "hello world test");
     }
 
     #[tokio::test]
     async fn enhance_should_retry_on_server_error() {
-        // Given: first request -> 500, second -> 200
+        // Given: первый запрос → 500, второй → 200
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/v1/responses"))
@@ -687,7 +862,7 @@ mod integration_tests {
         // When
         let result = client.do_enhance("my original text", None).await;
 
-        // Then: non-retryable error -> fallback to raw
+        // Then: non-retryable ошибка → fallback к исходному тексту
         assert_eq!(result.unwrap(), "my original text");
     }
 
@@ -706,7 +881,7 @@ mod integration_tests {
         // When
         let result = client.do_enhance("my text here", None).await;
 
-        // Then: retries exhausted -> fallback to raw
+        // Then: retry исчерпаны → fallback к исходному тексту
         assert_eq!(result.unwrap(), "my text here");
     }
 
@@ -754,7 +929,7 @@ mod integration_tests {
         // When
         let result = client.do_enhance("some text", None).await;
 
-        // Then: non-retryable, returns raw
+        // Then: non-retryable, возвращается исходный текст
         assert_eq!(result.unwrap(), "some text");
     }
 
@@ -769,7 +944,9 @@ mod integration_tests {
             .and(body_json(serde_json::json!({
                 "model": "gpt-5-mini",
                 "instructions": SYSTEM_PROMPT,
-                "input": "test text"
+                "input": "test text",
+                "reasoning": { "effort": REASONING_EFFORT },
+                "text": { "verbosity": TEXT_VERBOSITY }
             })))
             .respond_with(
                 ResponseTemplate::new(200).set_body_json(make_responses_json("Test text.")),
@@ -826,14 +1003,14 @@ mod integration_tests {
             "gpt-5-mini",
             Duration::from_secs(5),
             Duration::from_millis(200),
-            0, // no retries
+            0, // без retry
         )
         .unwrap();
 
         // When
         let result = client.do_enhance("my text", None).await;
 
-        // Then: timeout -> fallback to raw
+        // Then: timeout → fallback к исходному тексту
         assert_eq!(result.unwrap(), "my text");
     }
 
@@ -860,7 +1037,7 @@ mod integration_tests {
             )
             .await;
 
-        // Then: error type must be InvalidResponse for diagnostic clarity
+        // Then: тип ошибки должен быть InvalidResponse для однозначной диагностики
         let err = result.unwrap_err();
         assert!(
             matches!(err, EnhanceError::InvalidResponse(_)),
