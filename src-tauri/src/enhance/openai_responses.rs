@@ -14,6 +14,14 @@ const MAX_RATE_LIMIT_RETRIES: u32 = 5;
 /// Верхняя граница задержки backoff (секунды).
 const MAX_BACKOFF_SEC: u64 = 16;
 
+/// Нагрузка reasoning-процессора модели при enhance-запросе.
+/// "minimal" - минимальный reasoning, достаточный для нормализации текста.
+const REASONING_EFFORT: &str = "minimal";
+
+/// Многословность ответа модели.
+/// "low" - сжатый ответ без пояснений.
+const TEXT_VERBOSITY: &str = "low";
+
 const SYSTEM_PROMPT: &str = "\
 You are a text post-processor. Fix punctuation, grammar, and normalize \
 spacing/capitalization in the following dictated text. Do NOT change meaning, \
@@ -229,10 +237,10 @@ impl OpenAiEnhancer {
             instructions: instructions.to_string(),
             input: input.to_string(),
             reasoning: ReasoningParam {
-                effort: "minimal".to_string(),
+                effort: REASONING_EFFORT.to_string(),
             },
             text: TextParam {
-                verbosity: "low".to_string(),
+                verbosity: TEXT_VERBOSITY.to_string(),
             },
         };
 
@@ -937,8 +945,8 @@ mod integration_tests {
                 "model": "gpt-5-mini",
                 "instructions": SYSTEM_PROMPT,
                 "input": "test text",
-                "reasoning": { "effort": "minimal" },
-                "text": { "verbosity": "low" }
+                "reasoning": { "effort": REASONING_EFFORT },
+                "text": { "verbosity": TEXT_VERBOSITY }
             })))
             .respond_with(
                 ResponseTemplate::new(200).set_body_json(make_responses_json("Test text.")),
