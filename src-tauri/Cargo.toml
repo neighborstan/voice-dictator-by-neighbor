@@ -1,6 +1,6 @@
 [package]
 name = "voice-dictator"
-version = "0.1.0"
+version = "0.1.2"
 description = "Tray-first desktop app for voice dictation"
 authors = ["neighbor"]
 edition = "2021"

@@ -1,6 +1,6 @@
 # Voice Dictator
 
-[![version](https://img.shields.io/badge/version-0.1.0-blue)](CHANGELOG.md#010---2026-03-09)
+[![version](https://img.shields.io/badge/version-0.1.2-blue)](CHANGELOG.md#012)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)](https://tauri.app)
 [![tauri](https://img.shields.io/badge/built%20with-Tauri%20v2-24C8DB)](https://tauri.app)
