@@ -70,6 +70,11 @@ build/
 ### Svelte / SvelteKit ###
 .svelte-kit/
 
-### Local dev scripts (not for repo) ###
+### Local dev scripts ###
 *.bat
+!/dev.bat
+!/build.bat
+!/test.bat
+!/fmt.bat
+!/check-all.bat
 nul
